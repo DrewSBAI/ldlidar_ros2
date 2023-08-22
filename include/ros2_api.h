@@ -33,6 +33,7 @@ struct LaserScanSetting
   std::string frame_id;
   bool laser_scan_dir;
   bool enable_angle_crop_func;
+  bool static_num_ranges_per_scan;
   double angle_crop_min;
   double angle_crop_max;
   double range_min;

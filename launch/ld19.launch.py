@@ -32,31 +32,32 @@ def generate_launch_description():
         {'product_name': 'LDLiDAR_LD19'},
         {'laser_scan_topic_name': 'scan'},
         {'point_cloud_2d_topic_name': 'pointcloud2d'},
-        {'frame_id': 'base_laser'},
-        {'port_name': '/dev/ttyUSB0'},
+        {'frame_id': 'lidar_link'},
+        {'port_name': '/dev/ttyS0'},
         {'serial_baudrate': 230400},
         {'laser_scan_dir': True},
         {'enable_angle_crop_func': False},
         {'angle_crop_min': 135.0},  # unit is degress
         {'angle_crop_max': 225.0},  # unit is degress
-        {'range_min': 0.02}, # unit is meter
-        {'range_max': 12.0}   # unit is meter
+        {'range_min': 0.45}, # unit is meter
+        {'range_max': 12.0},   # unit is meter
+        {'static_num_ranges_per_scan' : True} # clamp number of readings in each scan to a fixed length (i.e. readings in 1st scan)
       ]
   )
 
-  # base_link to base_laser tf node
-  base_link_to_laser_tf_node = Node(
-    package='tf2_ros',
-    executable='static_transform_publisher',
-    name='base_link_to_base_laser_ld19',
-    arguments=['0','0','0.18','0','0','0','base_link','base_laser']
-  )
+  # # base_link to base_laser tf node
+  # base_link_to_laser_tf_node = Node(
+  #   package='tf2_ros',
+  #   executable='static_transform_publisher',
+  #   name='base_link_to_base_laser_ld19',
+  #   arguments=['0','0','0.18','0','0','0','base_link','base_laser']
+  # )
 
 
   # Define LaunchDescription variable
   ld = LaunchDescription()
 
   ld.add_action(ldlidar_node)
-  ld.add_action(base_link_to_laser_tf_node)
+  #ld.add_action(base_link_to_laser_tf_node)
 
   return ld

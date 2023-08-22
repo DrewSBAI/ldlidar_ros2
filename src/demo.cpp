@@ -20,8 +20,10 @@
  */
 #include "ros2_api.h"
 #include "ldlidar_driver/ldlidar_driver_linux.h"
+#include <cmath>
 
 uint64_t GetTimestamp(void);
+int FixedScanLength = -1;
 
 void  ToLaserscanMessagePublish(ldlidar::Points2D& src,  double lidar_spin_freq, LaserScanSetting& setting,
   rclcpp::Node::SharedPtr& node, rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr& lidarpub);
@@ -56,6 +58,8 @@ int main(int argc, char **argv) {
   node->declare_parameter<double>("angle_crop_max", setting.angle_crop_max);
   node->declare_parameter<double>("range_min", setting.range_min);
   node->declare_parameter<double>("range_max", setting.range_max);
+  node->declare_parameter<bool>("static_num_ranges_per_scan", setting.static_num_ranges_per_scan);
+
 
   // get ros2 param
   node->get_parameter("product_name", product_name);
@@ -70,6 +74,8 @@ int main(int argc, char **argv) {
   node->get_parameter("angle_crop_max", setting.angle_crop_max);
   node->get_parameter("range_min", setting.range_min);
   node->get_parameter("range_max", setting.range_max);
+  node->get_parameter("static_num_ranges_per_scan", setting.static_num_ranges_per_scan);
+
 
   ldlidar::LDLidarDriverLinuxInterface* ldlidar_drv = 
     ldlidar::LDLidarDriverLinuxInterface::Create();
@@ -88,6 +94,8 @@ int main(int argc, char **argv) {
   RCLCPP_INFO(node->get_logger(), "<angle_crop_max>: %f", setting.angle_crop_max);
   RCLCPP_INFO(node->get_logger(), "<range_min>: %f", setting.range_min);
   RCLCPP_INFO(node->get_logger(), "<range_max>: %f", setting.range_max);
+  RCLCPP_INFO(node->get_logger(), "<static_num_ranges_per_scan>: %s", (setting.static_num_ranges_per_scan?"true":"false"));
+
 
   if (port_name.empty()) {
     RCLCPP_ERROR(node->get_logger(), "fail, port_name is empty!");
@@ -152,7 +160,7 @@ int main(int argc, char **argv) {
         double lidar_scan_freq = 0;
         ldlidar_drv->GetLidarScanFreq(lidar_scan_freq);
         ToLaserscanMessagePublish(laser_scan_points, lidar_scan_freq, setting, node, lidar_pub_laserscan);
-        ToSensorPointCloudMessagePublish(laser_scan_points, setting, node, lidar_pub_pointcloud);
+        // ToSensorPointCloudMessagePublish(laser_scan_points, setting, node, lidar_pub_pointcloud);
         break;
       }
       case ldlidar::LidarStatus::DATA_TIME_OUT: {
@@ -229,6 +237,10 @@ void  ToLaserscanMessagePublish(ldlidar::Points2D& src,  double lidar_spin_freq,
       output.time_increment = 0;
     } else {
       output.time_increment = static_cast<float>(scan_time / (double)(beam_size - 1));
+      if (FixedScanLength == -1 && setting.static_num_ranges_per_scan) {
+        FixedScanLength = beam_size;  // initialize the static scan length on the first good scan
+        RCLCPP_INFO(node->get_logger(), "Clamping all Laserscan messages to %d ranges", FixedScanLength);
+      }
     }
     output.scan_time = scan_time;
     // First fill all the data with Nan
@@ -283,6 +295,40 @@ void  ToLaserscanMessagePublish(ldlidar::Points2D& src,  double lidar_spin_freq,
           }
           output.intensities[index] = intensity;
         }
+      }
+    }
+
+    if (setting.static_num_ranges_per_scan) {
+      //extend or truncate the output for SLAM toolbox
+      if (beam_size > FixedScanLength) {
+        //too many range values, truncate vector and lower the angle_max to account for the removed range values 
+        //can't adjust angle increment as it's hardware provided
+
+        output.ranges.resize(FixedScanLength);
+        output.intensities.resize(FixedScanLength);
+
+        output.angle_max = output.angle_max - ((beam_size - FixedScanLength ) * output.angle_increment);
+        RCLCPP_INFO(node->get_logger(), "Clamping to fixed scan length. Truncated %d range values", (beam_size - FixedScanLength));
+      }
+      else if (beam_size < FixedScanLength) {
+        //not enough range values, extend vector 
+        //  & adjust angle_max to account for appended values (it will go over 360)
+        //  & duplicate values from beginning of array at the end.  
+        //can't adjust angle increment as it's hardware provided.
+
+        output.ranges.resize(FixedScanLength, std::numeric_limits<float>::quiet_NaN());
+        output.intensities.resize(FixedScanLength, std::numeric_limits<float>::quiet_NaN());
+
+        output.angle_max = output.angle_max + ((FixedScanLength - beam_size ) * output.angle_increment);
+
+        for (int i=0; i<(FixedScanLength - beam_size); i++) {
+          output.ranges[beam_size+i] = output.ranges[i];
+          output.intensities[beam_size+i] = output.intensities[i];
+        } 
+        RCLCPP_INFO(node->get_logger(), "Clamping to fixed scan length. Appended %d range values", (FixedScanLength - beam_size));
+      }
+      else {
+        RCLCPP_INFO(node->get_logger(), "Not clamping.  Scan length is as expected.");
       }
     }
     lidarpub->publish(output);
